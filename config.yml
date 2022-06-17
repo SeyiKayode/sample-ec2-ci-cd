@@ -145,7 +145,7 @@ Resources:
     Properties: 
       IamInstanceProfile: !Ref InstanceRoleInstanceProfile
       ImageId: !Ref AmiID
-      InstanceType: t1.micro
+      InstanceType: t2.micro
       SecurityGroupIds:
         - !Ref EC2SecurityGroup
       KeyName: !Ref KeyPairName
