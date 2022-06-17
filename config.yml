@@ -44,31 +44,31 @@ Resources:
   InstanceRole:
     Type: AWS::IAM::Role
     Properties:
-    AssumeRolePolicyDocument:
-      Statement:
-        - Effect: Allow
-          Principal:
-            Service:
-              - ec2.amazonaws.com
-          Action:
-            - sts:AssumeRole
-    Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
 
   InstanceRolePolicies:
     Type: AWS::IAM::Policy
     Properties:
-    PolicyName: InstanceRole
-    PolicyDocument:
-      Statement:
-        - Effect: Allow
-          Action:
-            - autoscaling:Describe*
-            - cloudformation:Describe*
-            - cloudformation:GetTemplate
-            - s3:Get*
-          Resource: '*'
-    Roles:
-      - !Ref 'InstanceRole'
+      PolicyName: InstanceRole
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+              - autoscaling:Describe*
+              - cloudformation:Describe*
+              - cloudformation:GetTemplate
+              - s3:Get*
+            Resource: '*'
+      Roles:
+        - !Ref 'InstanceRole'
 
   InstanceRoleInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -80,39 +80,39 @@ Resources:
   CodeDeployTrustRole:
     Type: AWS::IAM::Role
     Properties:
-    AssumeRolePolicyDocument:
-      Statement:
-        - Sid: '1'
-          Effect: Allow
-          Principal:
-            Service:
-              - codedeploy.eu-west-1.amazonaws.com
-          Action: sts:AssumeRole
-    Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Sid: '1'
+            Effect: Allow
+            Principal:
+              Service:
+                - codedeploy.eu-west-1.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
   
   CodeDeployRolePolicies:
     Type: AWS::IAM::Policy
     Properties:
-    PolicyName: CodeDeployPolicy
-    PolicyDocument:
-      Statement:
-        - Effect: Allow
-          Resource:
-            - '*'
-          Action:
-            - ec2:Describe*
-        - Effect: Allow
-          Resource:
-            - '*'
-          Action:
-            - autoscaling:CompleteLifecycleAction
-            - autoscaling:DeleteLifecycleHook
-            - autoscaling:DescribeLifecycleHooks
-            - autoscaling:DescribeAutoScalingGroups
-            - autoscaling:PutLifecycleHook
-            - autoscaling:RecordLifecycleActionHeartbeat
-    Roles:
-      - !Ref 'CodeDeployTrustRole'
+      PolicyName: CodeDeployPolicy
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Resource:
+              - '*'
+            Action:
+              - ec2:Describe*
+          - Effect: Allow
+            Resource:
+              - '*'
+            Action:
+              - autoscaling:CompleteLifecycleAction
+              - autoscaling:DeleteLifecycleHook
+              - autoscaling:DescribeLifecycleHooks
+              - autoscaling:DescribeAutoScalingGroups
+              - autoscaling:PutLifecycleHook
+              - autoscaling:RecordLifecycleActionHeartbeat
+      Roles:
+        - !Ref 'CodeDeployTrustRole'
   
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -133,66 +133,67 @@ Resources:
           ToPort: 22
           CidrIp: 0.0.0.0/0
   
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Metadata:
+      AWS::CloudFormation::Init:
+        services:
+          sysvint:
+            codedeploy-agent:
+              enabled: 'true'
+              ensureRunning: 'true'
+    Properties: 
+      IamInstanceProfile: !Ref InstanceRoleInstanceProfile
+      ImageId: !Ref AmiID
+      InstanceType: t1.micro
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      KeyName: !Ref KeyPairName
+      Tags: 
+        - Key: 'CodeDeployTag'
+          Value: 'CodeDeployDemo'
+      UserData: !Base64
+        Fn::Join:
+          - ''
+          - - "#!/bin/bash -ex\n"
+            - "yum update -y aws-cfn-bootstrap\n"
+            - "yum install -y aws-cli\n"
+            - "yum install -y ruby\n"
+            - "iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 -j REDIRECT --to-port 3000\n"
+            - "echo 'iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 -j REDIRECT --to-port 3000' >> /etc/rc.local\n"
+            - "# Helper function.\n"
+            - "function error_exit\n"
+            - "{\n"
+            - '  /opt/aws/bin/cfn-signal -e 1 -r "$1" '''
+            - !Ref 'WaitHandle'
+            - "'\n"
+            - "  exit 1\n"
+            - "}\n"
+            - "# Install the AWS CodeDeploy Agent.\n"
+            - "cd /home/ec2-user/\n"
+            - "aws s3 cp 's3://aws-codedeploy-eu-west-1/latest/codedeploy-agent.noarch.rpm'\
+              \ . || error_exit 'Failed to download AWS CodeDeploy Agent.'\n"
+            - "yum -y install codedeploy-agent.noarch.rpm || error_exit 'Failed to\
+              \ install AWS CodeDeploy Agent.' \n"
+            - '/opt/aws/bin/cfn-init -s '
+            - !Ref 'AWS::StackId'
+            - ' -r EC2Instance --region '
+            - !Ref 'AWS::Region'
+            - " || error_exit 'Failed to run cfn-init.'\n"
+            - "# All is well, so signal success.\n"
+            - /opt/aws/bin/cfn-signal -e 0 -r "AWS CodeDeploy Agent setup complete."
+              '
+            - !Ref 'WaitHandle'
+            - "'\n"
+
   WaitHandle:
     Type: AWS::CloudFormation::WaitConditionHandle
+
   WaitCondition:
     Type: AWS::CloudFormation::WaitCondition
     Properties:
       Handle: !Ref 'WaitHandle'
       Timeout: '900'
-  
-  EC2Instance:
-    Type: AWS::EC2::Instance
-    Properties: 
-    IamInstanceProfile: !Ref 'InstanceRoleInstanceProfile'
-    ImageId: !Ref AmiID
-    InstanceType: t1.micro
-    SecurityGroupIds:
-      - !Ref EC2SecurityGroup
-    KeyName: !Ref KeyPairName
-    Tags: 
-      - Key: 'CodeDeployTag'
-        Value: 'CodeDeployDemo'
-    UserData: !Base64
-		  Fn::Join:
-		    - ''
-		    - - "#!/bin/bash -ex\n"
-		      - "yum update -y aws-cfn-bootstrap\n"
-		      - "yum install -y aws-cli\n"
-		      - "yum install -y ruby\n"
-		      - "iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 -j REDIRECT --to-port 3000\n"
-		      - "echo 'iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 -j REDIRECT --to-port 3000' >> /etc/rc.local\n"
-		      - "# Helper function.\n"
-		      - "function error_exit\n"
-		      - "{\n"
-		      - '  /opt/aws/bin/cfn-signal -e 1 -r "$1" '''
-		      - !Ref 'WaitHandle'
-		      - "'\n"
-		      - "  exit 1\n"
-		      - "}\n"
-		      - "# Install the AWS CodeDeploy Agent.\n"
-		      - "cd /home/ec2-user/\n"
-		      - "aws s3 cp 's3://aws-codedeploy-us-east-1/latest/codedeploy-agent.noarch.rpm'\
-		        \ . || error_exit 'Failed to download AWS CodeDeploy Agent.'\n"
-		      - "yum -y install codedeploy-agent.noarch.rpm || error_exit 'Failed to\
-		        \ install AWS CodeDeploy Agent.' \n"
-		      - '/opt/aws/bin/cfn-init -s '
-		      - !Ref 'AWS::StackId'
-		      - ' -r WebAppInstance --region '
-		      - !Ref 'AWS::Region'
-		      - " || error_exit 'Failed to run cfn-init.'\n"
-		      - "# All is well, so signal success.\n"
-		      - /opt/aws/bin/cfn-signal -e 0 -r "AWS CodeDeploy Agent setup complete."
-		        '
-		      - !Ref 'WaitHandle'
-		      - "'\n"
-    Metadata:
-    AWS::CloudFormation::Init:
-      services:
-        sysvint:
-          codedeploy-agent:
-            enabled: 'true'
-            ensureRunning: 'true'
         
   CodeBuildServiceRole:
     Type: AWS::IAM::Role
@@ -260,7 +261,7 @@ Resources:
                   - codebuild:BatchGetBuilds
                   - iam:PassRole
               - Resource:
-                  - !Ref !Sub 'arn:aws:codestar-connections:${AWS::Region}:${AWS::AccountId}:connection/${CodeConnectionId}'
+                  - !Sub 'arn:aws:codestar-connections:${AWS::Region}:${AWS::AccountId}:connection/${CodeConnectionId}'
                 Effect: Allow
                 Action:
                   - codestar-connections:UseConnection
@@ -278,17 +279,17 @@ Resources:
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
-    Artifacts:
-      Type: CODEPIPELINE
-    Source:
-      Type: CODEPIPELINE
-      BuildSpec: buildspec.yml
-    Environment:
-      ComputeType: BUILD_GENERAL1_SMALL
-      Image: aws/codebuild/docker:17.09.0
-      Type: LINUX_CONTAINER
-    Name: !Ref AWS::StackName
-    ServiceRole: !Ref CodeBuildServiceRole
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec.yml
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/docker:17.09.0
+        Type: LINUX_CONTAINER
+      Name: !Ref AWS::StackName
+      ServiceRole: !Ref 'CodeBuildServiceRole'
   
   CodeDeployApplication:
     Type: AWS::CodeDeploy::Application
@@ -296,62 +297,62 @@ Resources:
   CodeDeployGroup:
     Type: AWS::CodeDeploy::DeploymentGroup
     Properties:
-    ApplicationName: !Ref CodeDeployApplication
-    Ec2TagFilters:
-      - Key: !Ref 'TagKey'
-        Value: !Ref 'TagValue'
-        Type: KEY_AND_VALUE
-    ServiceRoleArn: !Ref 'CodeDeployTrustRole'
+      ApplicationName: !Ref CodeDeployApplication
+      Ec2TagFilters:
+        - Key: !Ref 'TagKey'
+          Value: !Ref 'TagValue'
+          Type: KEY_AND_VALUE
+      ServiceRoleArn: !GetAtt CodeDeployTrustRole.Arn
   
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
-    RoleArn: !GetAtt CodePipelineServiceRole.Arn
-    ArtifactStore:
-      Type: S3
-      Location: !Ref ArtifactBucket
-    Stages:
-      - Name: Source
-        Actions:
-          - Name: App
-            ActionTypeId:
-              Category: Source
-              Owner: AWS
-              Version: '1'
-              Provider: CodeStarSourceConnection
-            Configuration:
-              ConnectionArn: !Sub 'arn:aws:codestar-connections:${AWS::Region}:${AWS::AccountId}:connection/${CodeConnectionId}'
-              BranchName: !Ref GitHubBranch
-              FullRepositoryId: !Sub ${GitHubUser}/${GitHubRepo}
-            OutputArtifacts:
-              - Name: AppArtifact
-            RunOrder: 1
-      - Name: Build
-        Actions:
-          - Name: Build
-            ActionTypeId:
-              Category: Build
-              Owner: AWS
-              Version: '1'
-              Provider: CodeBuild
-            Configuration:
-              ProjectName: !Ref CodeBuildProject
-            InputArtifacts:
-              - Name: AppArtifact
-            OutputArtifacts:
-              - Name: BuildOutput
-            RunOrder: 1
-      - Name: Deploy
-        Actions:
-          - Name: Deploy
-            ActionTypeId:
-              Category: Deploy
-              Owner: AWS
-              Version: '1'
-              Provider: CodeDeploy
-            Configuration:
-              ApplicationName: !Ref CodeDeployApplication
-              DeploymentGroupName: !Ref CodeDeployGroup
-            InputArtifacts:
-              - Name: BuildOutput
-            RunOrder: 1
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: App
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: '1'
+                Provider: CodeStarSourceConnection
+              Configuration:
+                ConnectionArn: !Sub 'arn:aws:codestar-connections:${AWS::Region}:${AWS::AccountId}:connection/${CodeConnectionId}'
+                BranchName: !Ref GitHubBranch
+                FullRepositoryId: !Sub ${GitHubUser}/${GitHubRepo}
+              OutputArtifacts:
+                - Name: AppArtifact
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: '1'
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: AppArtifact
+              OutputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: Deploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: '1'
+                Provider: CodeDeploy
+              Configuration:
+                ApplicationName: !Ref CodeDeployApplication
+                DeploymentGroupName: !Ref CodeDeployGroup
+              InputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 1
